@@ -39,11 +39,9 @@ logs/
 *.pkl-cache/
 
 # OS
-.DS_Store
 Thumbs.db
 
 # Project specific
-*.save
 model/old_models/
 data/backup/
 
@@ -55,16 +53,3 @@ data/backup/
 .pytest_cache/
 .coverage
 htmlcov/
-
-cat >> .gitignore << EOF
-
-# Ignore virtual environment
-env/
-venv/
-.env
-
-# Ignore cache
-__pycache__/
-*.pyc
-.DS_Store
-EOFbackend/model/*.pkl
