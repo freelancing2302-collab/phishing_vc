@@ -6,7 +6,7 @@
 
 // ── Config ──────────────────────────────────────────────
 const CONFIG = {
-  apiBase: 'http://localhost:5000',   // Flask backend URL
+  apiBase: 'https://phishing-vc-3.onrender.com',
   apiTimeout: 15000,
   debounceMs: 200,
 };
