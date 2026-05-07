@@ -81,7 +81,7 @@ PhishGuard AI is a production-ready phishing URL detection system that combines:
 
 ### 1️⃣ Clone or Download
 ```bash
-cd /home/jaikamal/Documents/Project\ CHANDRA
+cd /---
 ```
 
 ### 2️⃣ Setup Virtual Environment
@@ -133,7 +133,7 @@ http://localhost:8000
 
 ```bash
 # 1. Navigate to project
-cd /home/jaikamal/Documents/Project\ CHANDRA
+cd /home/---
 
 # 2. Create virtual environment
 python3 -m venv env
