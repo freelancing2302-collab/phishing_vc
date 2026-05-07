@@ -42,8 +42,6 @@ const DOM = {
   historyList:     $('historyList'),
   historyEmpty:    $('historyEmpty'),
   toast:           $('toast'),
-  apiStatus:       $('apiStatus'),
-  apiStatusText:   $('apiStatusText'),
   navbar:          $('navbar'),
   hamburger:       $('hamburger'),
   mobileDrawer:    $('mobileDrawer'),
@@ -164,35 +162,6 @@ document.querySelectorAll('.mob-link').forEach(l => {
 });
 
 // ══════════════════════════════════════════════════════════
-//  API STATUS CHECK
-// ══════════════════════════════════════════════════════════
-async function checkApiStatus() {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-
-    const res = await fetch(`${CONFIG.apiBase}/health`, {
-      method: 'GET',
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (res.ok) {
-      DOM.apiStatus.className = 'status-dot online';
-      DOM.apiStatusText.textContent = 'API Online';
-    } else {
-      throw new Error('not ok');
-    }
-  } catch {
-    DOM.apiStatus.className = 'status-dot offline';
-    DOM.apiStatusText.textContent = 'Demo Mode';
-  }
-}
-
-checkApiStatus();
-setInterval(checkApiStatus, 30000);
-
-// ══════════════════════════════════════════════════════════
 //  URL INPUT HANDLING
 // ══════════════════════════════════════════════════════════
 DOM.urlInput.addEventListener('input', () => {
@@ -251,91 +220,6 @@ function resetScanSteps() {
 }
 
 // ══════════════════════════════════════════════════════════
-//  MOCK DATA — used when API is offline
-// ══════════════════════════════════════════════════════════
-function generateMockResult(url) {
-  // Simple heuristic to make demo feel realistic
-  const suspiciousKeywords = ['login','verify','secure','account','update','confirm','paypal','amazon','bank','signin'];
-  const suspiciousTLDs     = ['.xyz','.ru','.tk','.ml','.ga','.cf','.gq'];
-  const suspiciousChars    = (url.match(/[-_.]/g) || []).length;
-  const hasNumbers         = /\d/.test(url.replace(/https?:\/\//, '').split('/')[0]);
-  const urlLen             = url.length;
-
-  let phishScore = 0.1;
-  suspiciousKeywords.forEach(kw => { if (url.toLowerCase().includes(kw)) phishScore += 0.18; });
-  suspiciousTLDs.forEach(tld => { if (url.toLowerCase().includes(tld)) phishScore += 0.25; });
-  if (suspiciousChars > 3) phishScore += 0.12;
-  if (hasNumbers) phishScore += 0.08;
-  if (urlLen > 75) phishScore += 0.1;
-  if (url.includes('http://')) phishScore += 0.08;
-
-  // Clamp
-  phishScore = Math.min(phishScore + (Math.random() * 0.06 - 0.03), 0.98);
-  phishScore = Math.max(phishScore, 0.04);
-
-  const isPhishing = phishScore > 0.5;
-
-  const shapValues = [
-    { feature: 'url_length',            value: +(urlLen / 100).toFixed(3),            shap: isPhishing ?  0.08  : -0.04 },
-    { feature: 'special_char_ratio',    value: +(suspiciousChars / urlLen).toFixed(3), shap: isPhishing ?  0.14  : -0.06 },
-    { feature: 'has_suspicious_word',   value: isPhishing ? 1 : 0,                    shap: isPhishing ?  0.22  : -0.18 },
-    { feature: 'https_protocol',        value: url.startsWith('https') ? 1 : 0,       shap: url.startsWith('https') ? -0.12 : 0.15 },
-    { feature: 'url_entropy',           value: +calcEntropy(url).toFixed(3),           shap: +(calcEntropy(url) * 0.03 - 0.05).toFixed(3) },
-    { feature: 'subdomain_count',       value: (url.split('/')[2] || '').split('.').length - 2, shap: isPhishing ? 0.09 : -0.03 },
-    { feature: 'dot_count',             value: (url.match(/\./g) || []).length,         shap: isPhishing ? 0.06  : -0.02 },
-    { feature: 'has_ip_address',        value: /\d{1,3}\.\d{1,3}/.test(url) ? 1 : 0,  shap: /\d{1,3}\.\d{1,3}/.test(url) ? 0.19 : -0.01 },
-    { feature: 'path_length',           value: url.split('?')[0].length,               shap: isPhishing ? 0.05  : -0.04 },
-    { feature: 'typosquatting_score',   value: +(Math.random() * (isPhishing ? 0.7 : 0.1)).toFixed(3), shap: isPhishing ? 0.17 : -0.12 },
-    { feature: 'homograph_suspicion',   value: isPhishing ? +(Math.random() * 0.5).toFixed(2) : 0, shap: isPhishing ? 0.11 : 0.0 },
-    { feature: 'tld_risk_score',        value: +phishScore.toFixed(3),                 shap: isPhishing ? 0.13  : -0.09 },
-  ].sort((a, b) => Math.abs(b.shap) - Math.abs(a.shap));
-
-  const features = [
-    { name: 'url_length',          value: urlLen,                           risk: urlLen > 75 ? 'high' : urlLen > 45 ? 'medium' : 'low',   desc: 'Total character length of the URL' },
-    { name: 'special_char_count',  value: suspiciousChars,                  risk: suspiciousChars > 5 ? 'high' : suspiciousChars > 2 ? 'medium' : 'low', desc: 'Count of special characters (-, _, .)' },
-    { name: 'has_https',           value: url.startsWith('https') ? 'Yes' : 'No', risk: url.startsWith('https') ? 'low' : 'high',         desc: 'Whether URL uses HTTPS protocol' },
-    { name: 'url_entropy',         value: calcEntropy(url).toFixed(3),      risk: calcEntropy(url) > 4.5 ? 'high' : 'low',               desc: 'Shannon entropy of URL string' },
-    { name: 'subdomain_depth',     value: (url.split('/')[2] || '').split('.').length - 2, risk: ((url.split('/')[2] || '').split('.').length - 2) > 2 ? 'high' : 'low', desc: 'Number of subdomains present' },
-    { name: 'has_ip_in_host',      value: /\d{1,3}\.\d{1,3}/.test(url.split('/')[2]) ? 'Yes' : 'No', risk: /\d{1,3}\.\d{1,3}/.test(url) ? 'high' : 'low', desc: 'Whether host is an IP address' },
-    { name: 'typosquatting_score', value: isPhishing ? (Math.random() * 0.7).toFixed(3) : (Math.random() * 0.1).toFixed(3), risk: isPhishing ? 'high' : 'low', desc: 'Levenshtein similarity to known brand domains' },
-    { name: 'homograph_score',     value: isPhishing ? (Math.random() * 0.5).toFixed(3) : '0.000', risk: isPhishing ? 'medium' : 'low',  desc: 'Unicode homograph attack detection score' },
-    { name: 'tld_suspicion',       value: suspiciousTLDs.some(t => url.includes(t)) ? 'Yes' : 'No', risk: suspiciousTLDs.some(t => url.includes(t)) ? 'high' : 'low', desc: 'Whether TLD is in high-risk list' },
-    { name: 'query_param_count',   value: (url.split('?')[1] || '').split('&').filter(Boolean).length, risk: 'low', desc: 'Number of query parameters' },
-    { name: 'path_depth',          value: (url.split('/').length - 3),      risk: 'low',                                                  desc: 'Depth of the URL path' },
-    { name: 'suspicious_keywords', value: suspiciousKeywords.filter(kw => url.toLowerCase().includes(kw)).length, risk: suspiciousKeywords.filter(kw => url.toLowerCase().includes(kw)).length > 0 ? 'high' : 'low', desc: 'Count of phishing keywords found in URL' },
-  ];
-
-  const rfProb   = +(phishScore * 0.95 + Math.random() * 0.05).toFixed(3);
-  const gbProb   = +(phishScore * 0.92 + Math.random() * 0.06).toFixed(3);
-  const xgbProb  = +(phishScore * 0.97 + Math.random() * 0.04).toFixed(3);
-
-  return {
-    url,
-    is_phishing:   isPhishing,
-    confidence:    +(isPhishing ? phishScore : 1 - phishScore).toFixed(4),
-    phishing_prob: +phishScore.toFixed(4),
-    shap_values:   shapValues,
-    features,
-    model_probs: {
-      random_forest:       Math.min(rfProb,  0.99),
-      gradient_boosting:   Math.min(gbProb,  0.99),
-      xgboost:             Math.min(xgbProb, 0.99),
-    },
-    demo_mode: true,
-  };
-}
-
-function calcEntropy(str) {
-  const freq = {};
-  str.split('').forEach(c => { freq[c] = (freq[c] || 0) + 1; });
-  const len = str.length;
-  return Object.values(freq).reduce((e, f) => {
-    const p = f / len;
-    return e - p * Math.log2(p);
-  }, 0);
-}
-
-// ══════════════════════════════════════════════════════════
 //  ANALYZE
 // ══════════════════════════════════════════════════════════
 async function analyze() {
@@ -355,25 +239,30 @@ async function analyze() {
   let result;
   try {
     result = await fetchAnalysis(url);
+    
+    // Min display time for animation
+    await sleep(2800);
+
+    DOM.scanOverlay.style.display = 'none';
+    DOM.analyzeBtn.querySelector('.btn-text').style.display = 'flex';
+    DOM.analyzeBtn.querySelector('.btn-loading').style.display = 'none';
+    DOM.analyzeBtn.disabled = false;
+
+    state.currentResult = result;
+    renderResult(result);
+    addToHistory(result);
   } catch (err) {
-    // Fallback to demo mode
-    result = generateMockResult(url);
+    DOM.scanOverlay.style.display = 'none';
+    DOM.analyzeBtn.querySelector('.btn-text').style.display = 'flex';
+    DOM.analyzeBtn.querySelector('.btn-loading').style.display = 'none';
+    DOM.analyzeBtn.disabled = false;
+    
     if (err.name !== 'AbortError') {
-      showToast('API offline — showing demo prediction', 'error');
+      showToast('❌ Failed to analyze URL. Make sure the backend is running.', 'error');
+    } else {
+      showToast('Request timeout. Please try again.', 'error');
     }
   }
-
-  // Min display time for animation
-  await sleep(2800);
-
-  DOM.scanOverlay.style.display = 'none';
-  DOM.analyzeBtn.querySelector('.btn-text').style.display = 'flex';
-  DOM.analyzeBtn.querySelector('.btn-loading').style.display = 'none';
-  DOM.analyzeBtn.disabled = false;
-
-  state.currentResult = result;
-  renderResult(result);
-  addToHistory(result);
 }
 
 async function fetchAnalysis(url) {
@@ -431,10 +320,6 @@ function renderResult(result) {
 
   DOM.resultSection.style.display = 'block';
   DOM.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  if (result.demo_mode) {
-    showToast('📊 Demo mode — connect Flask backend for real predictions', 'success');
-  }
 }
 
 // ── SHAP Chart ───────────────────────────────────────────

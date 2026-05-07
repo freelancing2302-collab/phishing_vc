@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # FLASK APP SETUP
 # ===============================
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000", "http://localhost"])
+CORS(app, origins=["*"], supports_credentials=True)
 
 # ===============================
 # LOAD MODELS & VECTORIZER
@@ -77,7 +77,11 @@ class Config:
     MAX_REQUESTS_PER_MINUTE = 60
 
 # Simple in-memory cache for URL results
+# ===============================
+# URL CACHE MANAGEMENT
+# ===============================
 url_cache = {}
+cache_timestamps = {}  # Separate dictionary to store when each URL was cached
 
 # ===============================
 # UTILITY FUNCTIONS
@@ -166,14 +170,86 @@ def check_google_safe_browsing(url):
         logger.error(f"Error checking Google Safe Browsing: {e}")
         return None
 
+def extract_url_features(url):
+    """
+    Extract 30 URL features for ML model
+    These are the features the model was trained on
+    """
+    try:
+        from urllib.parse import urlparse
+        import re
+        
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        path = parsed_url.path
+        query = parsed_url.query
+        
+        features = []
+        
+        # Length features
+        features.append(len(url))  # URL length
+        features.append(len(domain))  # Domain length
+        features.append(len(path))  # Path length
+        features.append(len(query))  # Query length
+        
+        # Count features
+        features.append(url.count('.'))  # Dots in URL
+        features.append(url.count('-'))  # Hyphens in URL
+        features.append(url.count('_'))  # Underscores in URL
+        features.append(url.count('?'))  # Question marks
+        features.append(url.count('='))  # Equal signs
+        features.append(url.count('&'))  # Ampersands
+        features.append(url.count('/'))  # Forward slashes
+        features.append(domain.count('.'))  # Dots in domain
+        features.append(domain.count('-'))  # Hyphens in domain
+        
+        # Protocol features
+        features.append(1 if url.startswith('https') else 0)  # HTTPS used
+        features.append(1 if url.startswith('http://') else 0)  # HTTP used
+        
+        # Special character features
+        features.append(len(re.findall(r'[0-9]', url)))  # Digits count
+        features.append(len(re.findall(r'[A-Z]', url)))  # Uppercase letters
+        features.append(len(re.findall(r'[@#$%&*]', url)))  # Special chars
+        
+        # Domain features
+        features.append(1 if domain.count('.') > 2 else 0)  # Subdomains
+        features.append(1 if re.match(r'^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+', domain) else 0)  # IP address
+        features.append(1 if len(domain) > 75 else 0)  # Long domain
+        features.append(1 if any(char.isdigit() for char in domain) else 0)  # Digits in domain
+        
+        # URL structure
+        features.append(len(path.split('/')))  # Path segments
+        features.append(query.count('&') + 1 if query else 0)  # Query parameters
+        features.append(1 if '%' in url else 0)  # URL encoded chars
+        features.append(1 if '//' in url[8:] else 0)  # Double slash (except in protocol)
+        
+        # Entropy/randomness
+        unique_chars = len(set(domain))
+        features.append(unique_chars)  # Unique characters in domain
+        
+        # Pad or trim to 30 features if needed
+        while len(features) < 30:
+            features.append(0)
+        features = features[:30]
+        
+        return features
+    except Exception as e:
+        logger.error(f"Error extracting features: {e}")
+        return [0] * 30
+
 def ml_predict(url):
     """Run ML model prediction on URL"""
-    if not model or not vectorizer:
+    if not model:
         return None
     
     try:
-        url_vec = vectorizer.transform([url])
-        probability = model.predict_proba(url_vec)[0][1]
+        # Extract 30 URL features instead of using vectorizer
+        features = extract_url_features(url)
+        import numpy as np
+        X = np.array([features])
+        
+        probability = model.predict_proba(X)[0][1]
         
         return {
             'probability': float(probability),
@@ -235,9 +311,10 @@ def predict():
             return jsonify({"error": "Invalid URL format. Use http:// or https://"}), 400
         
         # Check cache
-        if url in url_cache:
-            cached_result = url_cache[url]
-            if datetime.now() - cached_result['timestamp'] < timedelta(hours=1):
+        if url in url_cache and url in cache_timestamps:
+            cached_timestamp = cache_timestamps[url]
+            if datetime.now() - cached_timestamp < timedelta(hours=1):
+                cached_result = url_cache[url].copy()
                 cached_result['from_cache'] = True
                 return jsonify(cached_result), 200
         
@@ -263,6 +340,7 @@ def predict():
                 "from_cache": False
             }
             url_cache[url] = result
+            cache_timestamps[url] = datetime.now()
             return jsonify(result), 200
         
         # ===============================
@@ -284,6 +362,7 @@ def predict():
                 "from_cache": False
             }
             url_cache[url] = result
+            cache_timestamps[url] = datetime.now()
             logger.warning(f"Phishing detected via Google Safe Browsing: {url}")
             return jsonify(result), 200
         
@@ -327,6 +406,7 @@ def predict():
         
         # Cache the result
         url_cache[url] = result
+        cache_timestamps[url] = datetime.now()
         return jsonify(result), 200
         
     except Exception as e:
@@ -392,8 +472,9 @@ def manage_whitelist():
 @app.route("/cache/clear", methods=["POST"])
 def clear_cache():
     """Clear URL cache"""
-    global url_cache
+    global url_cache, cache_timestamps
     url_cache.clear()
+    cache_timestamps.clear()
     logger.info("Cache cleared")
     return jsonify({"message": "✅ Cache cleared"}), 200
 
