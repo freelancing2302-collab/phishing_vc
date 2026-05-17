@@ -826,6 +826,10 @@ img, svg { display: block; }
   background: rgba(34,197,94,.07);
   border-color: rgba(34,197,94,.4);
 }
+.verdict-banner.suspicious {
+  background: rgba(249,115,22,.07);
+  border-color: rgba(249,115,22,.4);
+}
 
 .verdict-icon-wrap {
   width: 64px; height: 64px;
@@ -837,6 +841,7 @@ img, svg { display: block; }
 }
 .verdict-banner.phishing .verdict-icon-wrap { background: rgba(239,68,68,.15); }
 .verdict-banner.legitimate .verdict-icon-wrap { background: rgba(34,197,94,.15); }
+.verdict-banner.suspicious .verdict-icon-wrap { background: rgba(249,115,22,.15); }
 .verdict-icon { font-size: 2rem; }
 
 .verdict-info { flex: 1; }
@@ -848,6 +853,7 @@ img, svg { display: block; }
 }
 .verdict-banner.phishing .verdict-label   { color: var(--red-l); }
 .verdict-banner.legitimate .verdict-label { color: var(--green-l); }
+.verdict-banner.suspicious .verdict-label { color: var(--orange); }
 .verdict-url {
   font-family: 'JetBrains Mono', monospace;
   font-size: .8rem;

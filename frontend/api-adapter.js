@@ -24,8 +24,13 @@ function transformApiResponse(apiResponse) {
   
   if (!apiResponse) return null;
   
-  const isPishing = apiResponse.prediction === 'Phishing';
-  const confidence = apiResponse.phishing_probability || 0;
+  // Mark as phishing if prediction is either "Phishing" or "Suspicious"
+  const isPhishing = apiResponse.prediction !== 'Legitimate';
+  // Use confidence_percentage from backend (0-100), convert to 0-1 for confidence field
+  // IMPORTANT: confidence = phishing_probability (not certainty of verdict)
+  // Low % = Safe (likely legitimate), High % = Risky (likely phishing)
+  const confidencePercentage = apiResponse.confidence_percentage || 0;
+  const confidence = confidencePercentage / 100;
   const detectionMethod = apiResponse.detection_method || 'unknown';
   
   return {
@@ -36,9 +41,9 @@ function transformApiResponse(apiResponse) {
     from_cache: apiResponse.from_cache || false,
     
     // Frontend compatibility fields
-    is_phishing: isPishing,
+    is_phishing: isPhishing,
     confidence: Math.max(0, Math.min(1, confidence)),
-    confidence_percentage: apiResponse.confidence_percentage || 0,
+    confidence_percentage: confidencePercentage,
     prediction: apiResponse.prediction,
     risk_level: apiResponse.risk_level,
     detection_method: detectionMethod,
@@ -51,11 +56,7 @@ function transformApiResponse(apiResponse) {
     // In a production system, these would come from the backend
     features: generateMockFeatures(apiResponse.url),
     shap_values: generateMockShapValues(apiResponse.phishing_probability),
-    model_probs: {
-      phishing: apiResponse.phishing_probability,
-      legitimate: 1 - apiResponse.phishing_probability,
-      suspicious: 0
-    },
+    model_probs: generateMockModelProbs(apiResponse.phishing_probability),
     
     // For demo mode compatibility
     demo_mode: false
@@ -102,19 +103,50 @@ function generateMockShapValues(probability) {
   /**
    * Generate mock SHAP values for visualization
    * These should come from the backend's ML model in production
+   * 
+   * Generate balanced positive (phishing) and negative (legitimate) values
+   * with realistic variance independent of base probability
    */
   const riskFactors = [
-    { feature: 'phishing_probability', shap: probability * 0.4 },
-    { feature: 'url_entropy', shap: probability * 0.2 },
-    { feature: 'domain_age', shap: (1 - probability) * 0.15 },
-    { feature: 'special_characters', shap: probability * 0.15 },
-    { feature: 'https_protocol', shap: (1 - probability) * 0.1 },
-    { feature: 'suspicious_keywords', shap: probability * 0.08 },
-    { feature: 'tld_reputation', shap: (1 - probability) * 0.07 },
-    { feature: 'domain_length', shap: probability * 0.05 },
+    // Phishing indicators (positive SHAP values)
+    { feature: 'phishing_probability', shap: probability * 0.35 + (Math.random() - 0.5) * 0.12 },
+    { feature: 'url_entropy', shap: probability * 0.20 + (Math.random() - 0.5) * 0.08 },
+    { feature: 'special_characters', shap: probability * 0.15 + (Math.random() - 0.5) * 0.06 },
+    { feature: 'suspicious_keywords', shap: probability * 0.10 + (Math.random() - 0.5) * 0.05 },
+    { feature: 'domain_length', shap: probability * 0.08 + (Math.random() - 0.5) * 0.04 },
+    
+    // Legitimate indicators (negative SHAP values) 
+    { feature: 'domain_age', shap: -((1 - probability) * 0.18 + (Math.random() - 0.5) * 0.08) },
+    { feature: 'https_protocol', shap: -((1 - probability) * 0.12 + (Math.random() - 0.5) * 0.06) },
+    { feature: 'tld_reputation', shap: -((1 - probability) * 0.10 + (Math.random() - 0.5) * 0.05) },
+    { feature: 'domain_whois_age', shap: -((1 - probability) * 0.08 + (Math.random() - 0.5) * 0.04) },
+    { feature: 'certificate_status', shap: -((1 - probability) * 0.07 + (Math.random() - 0.5) * 0.03) },
   ];
   
-  return riskFactors.sort((a, b) => Math.abs(b.shap) - Math.abs(a.shap));
+  // Clamp values to reasonable range and sort by absolute value
+  return riskFactors
+    .map(f => ({ ...f, shap: Math.max(-0.5, Math.min(0.5, f.shap)) }))
+    .sort((a, b) => Math.abs(b.shap) - Math.abs(a.shap));
+}
+
+function generateMockModelProbs(probability) {
+  /**
+   * Generate individual model predictions
+   * Each model has slight variations from the overall probability
+   * to simulate ensemble learning where models can disagree
+   */
+  const baseVariance = 0.08; // ±8% variance between models
+  
+  // Add realistic variance to each model
+  const rf = Math.max(0, Math.min(1, probability + (Math.random() - 0.5) * baseVariance));
+  const gb = Math.max(0, Math.min(1, probability + (Math.random() - 0.5) * baseVariance));
+  const xgb = Math.max(0, Math.min(1, probability + (Math.random() - 0.5) * baseVariance));
+  
+  return {
+    random_forest: rf,
+    gradient_boosting: gb,
+    xgboost: xgb
+  };
 }
 
 // For demo/fallback mode

@@ -32,7 +32,7 @@ CORS(app, origins=["*"], supports_credentials=True)
 # LOAD MODELS & VECTORIZER
 # ===============================
 try:
-    model = joblib.load("model/meta_model.pkl")
+    model = joblib.load("model/phishing_model.pkl")
     vectorizer = joblib.load("model/vectorizer.pkl")
     logger.info("✅ Model and vectorizer loaded successfully")
 except Exception as e:
@@ -63,6 +63,7 @@ class Config:
         'bank.com',  # Example - replace with real banks
         'paypal.com',
         'stripe.com',
+        'velalarengg.ac.in',  # Your college website
     }
     
     # Google Safe Browsing API
@@ -70,8 +71,8 @@ class Config:
     GOOGLE_SAFE_BROWSING_URL = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
     
     # ML Model thresholds
-    PHISHING_THRESHOLD = 0.85      # High risk
-    SUSPICIOUS_THRESHOLD = 0.50    # Medium risk
+    PHISHING_THRESHOLD = 0.70      # 70% - High risk
+    SUSPICIOUS_THRESHOLD = 0.35    # 35% - Medium risk
     
     # API Rate Limiting
     MAX_REQUESTS_PER_MINUTE = 60
@@ -240,16 +241,15 @@ def extract_url_features(url):
 
 def ml_predict(url):
     """Run ML model prediction on URL"""
-    if not model:
+    if not model or not vectorizer:
         return None
     
     try:
-        # Extract 30 URL features instead of using vectorizer
-        features = extract_url_features(url)
-        import numpy as np
-        X = np.array([features])
+        # Vectorize the URL using the same vectorizer used during training
+        url_vectorized = vectorizer.transform([url])
         
-        probability = model.predict_proba(X)[0][1]
+        # Predict using the vectorized URL
+        probability = model.predict_proba(url_vectorized)[0][1]
         
         return {
             'probability': float(probability),
@@ -332,7 +332,7 @@ def predict():
                 "domain": domain,
                 "prediction": "Legitimate",
                 "phishing_probability": 0.0,
-                "confidence_percentage": 100.0,
+                "confidence_percentage": 0.0,
                 "risk_level": "Low Risk",
                 "detection_method": "trusted_whitelist",
                 "note": "✅ Domain is in trusted whitelist",

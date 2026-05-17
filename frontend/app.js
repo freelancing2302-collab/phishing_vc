@@ -6,7 +6,7 @@
 
 // ── Config ──────────────────────────────────────────────
 const CONFIG = {
-  apiBase: 'https://phishing-vc-3.onrender.com',
+  apiBase: 'http://localhost:5000',
   apiTimeout: 15000,
   debounceMs: 200,
 };
@@ -257,8 +257,9 @@ async function analyze() {
     DOM.analyzeBtn.querySelector('.btn-loading').style.display = 'none';
     DOM.analyzeBtn.disabled = false;
     
+    console.error('🚨 Analyze error:', err.message, err);
     if (err.name !== 'AbortError') {
-      showToast('❌ Failed to analyze URL. Make sure the backend is running.', 'error');
+      showToast(`❌ Error: ${err.message || 'Failed to analyze URL. Make sure backend is running.'}`, 'error');
     } else {
       showToast('Request timeout. Please try again.', 'error');
     }
@@ -269,16 +270,32 @@ async function fetchAnalysis(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CONFIG.apiTimeout);
 
-  const res = await fetch(`${CONFIG.apiBase}/predict`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ url }),
-    signal:  controller.signal,
-  });
-  clearTimeout(timer);
+  try {
+    console.log(`🔍 Fetching from: ${CONFIG.apiBase}/predict`);
+    const res = await fetch(`${CONFIG.apiBase}/predict`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ url }),
+      signal:  controller.signal,
+    });
+    clearTimeout(timer);
 
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+    console.log(`📡 Response status: ${res.status}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    
+    const apiResponse = await res.json();
+    console.log(`✅ API Response:`, apiResponse);
+    
+    const transformed = transformApiResponse(apiResponse);
+    console.log(`🔄 Transformed Response:`, transformed);
+    return transformed;
+  } catch (err) {
+    console.error(`❌ fetchAnalysis error:`, err);
+    throw err;
+  }
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -288,18 +305,45 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ══════════════════════════════════════════════════════════
 function renderResult(result) {
   const isPhish = result.is_phishing;
-  const conf    = (result.confidence * 100).toFixed(1);
+  const confPct = result.confidence * 100;
+  const conf    = confPct.toFixed(1);
+  
+  // Note: "confidence" = phishing_probability (0-100%)
+  // Low % = Safe (legitimate), High % = Risky (phishing)
+  // E.g., 1.8% phishing probability = 98.2% legitimate
+  
+  // Determine verdict: PHISHING, SUSPICIOUS (low confidence), or LEGITIMATE
+  let verdict = 'legitimate'; // default
+  if (isPhish) {
+    if (confPct > 70) {
+      verdict = 'phishing';     // High confidence phishing prediction
+    } else if (confPct > 35) {
+      verdict = 'suspicious';   // Low confidence phishing - uncertain
+    }
+    // else remains 'legitimate' (confidence < 35%)
+  }
 
   // Verdict banner
-  DOM.verdictBanner.className = `verdict-banner ${isPhish ? 'phishing' : 'legitimate'}`;
-  DOM.verdictIcon.textContent  = isPhish ? '⚠️' : '✅';
-  DOM.verdictLabel.textContent = isPhish ? '🚨 PHISHING DETECTED' : '✅ LEGITIMATE URL';
+  DOM.verdictBanner.className = `verdict-banner ${verdict}`;
+  
+  // Set icon and label based on verdict
+  if (verdict === 'phishing') {
+    DOM.verdictIcon.textContent  = '🚫';
+    DOM.verdictLabel.textContent = '🚫 PHISHING URL';
+  } else if (verdict === 'suspicious') {
+    DOM.verdictIcon.textContent  = '⚠️';
+    DOM.verdictLabel.textContent = '⚠️ SUSPICIOUS URL';
+  } else {
+    DOM.verdictIcon.textContent  = '✅';
+    DOM.verdictLabel.textContent = '✅ LEGITIMATE URL';
+  }
+  
   DOM.verdictUrl.textContent   = result.url;
 
   // Confidence circle
   DOM.confValue.textContent = `${conf}%`;
-  DOM.confValue.style.color = isPhish ? 'var(--red-l)' : 'var(--green-l)';
-  DOM.confCircle.style.stroke = isPhish ? '#ef4444' : '#22c55e';
+  DOM.confValue.style.color = verdict === 'phishing' ? 'var(--red-l)' : verdict === 'suspicious' ? 'var(--orange)' : 'var(--green-l)';
+  DOM.confCircle.style.stroke = verdict === 'phishing' ? '#ef4444' : verdict === 'suspicious' ? '#f97316' : '#22c55e';
 
   const dashoff = 314 - (314 * parseFloat(conf) / 100);
   setTimeout(() => {
@@ -307,6 +351,7 @@ function renderResult(result) {
   }, 100);
 
   // Render tabs
+  console.log('🔍 model_probs:', result.model_probs);
   renderShapChart(result.shap_values);
   renderFeatureTable(result.features);
   renderModelCards(result.model_probs, result.is_phishing);
@@ -396,7 +441,7 @@ function renderFeatureTable(features) {
           ${riskIcon(f.risk)} ${f.risk.toUpperCase()}
         </span>
       </td>
-      <td>${f.desc}</td>
+      <td>${f.description}</td>
     </tr>
   `).join('');
 }
@@ -413,7 +458,7 @@ function renderModelCards(modelProbs, isPhishing) {
     const prob    = modelProbs[m.key] ?? 0.5;
     const pct     = (prob * 100).toFixed(1);
     const isPhish = prob > 0.5;
-    const dashoff = 201 - (201 * prob);
+    const dashoff = 201 * (1 - prob); // Dash offset for filled portion
     const strokeColor = isPhish ? '#ef4444' : '#22c55e';
     const uid = `gauge-${m.key}`;
 
@@ -424,7 +469,7 @@ function renderModelCards(modelProbs, isPhishing) {
           <svg class="model-gauge-svg" width="80" height="80" viewBox="0 0 80 80">
             <circle cx="40" cy="40" r="32" class="gauge-track"/>
             <circle cx="40" cy="40" r="32" class="gauge-fill" id="${uid}"
-              style="stroke:${strokeColor}; stroke-dashoffset:201"/>
+              style="stroke:${strokeColor}; stroke-dashoffset:201; stroke-dasharray:201;"/>
           </svg>
           <div class="model-prob-text" style="color:${strokeColor}">${pct}%</div>
         </div>
@@ -437,14 +482,14 @@ function renderModelCards(modelProbs, isPhishing) {
 
   // Animate gauges
   requestAnimationFrame(() => {
-    models.forEach(m => {
+    models.forEach((m, index) => {
       const prob = modelProbs[m.key] ?? 0.5;
       const el   = document.getElementById(`gauge-${m.key}`);
       if (el) {
         setTimeout(() => {
-          el.style.transition = 'stroke-dashoffset 1.2s ease';
-          el.style.strokeDashoffset = 201 - (201 * prob);
-        }, 100);
+          el.style.transition = 'stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1)';
+          el.style.strokeDashoffset = 201 * (1 - prob);
+        }, 50 + index * 150);
       }
     });
   });
@@ -686,7 +731,7 @@ function animateCounter(el, end, suffix = '', duration = 1500) {
     const progress = Math.min(elapsed / duration, 1);
     const ease     = 1 - Math.pow(1 - progress, 3);
     const value    = start + (endNum - start) * ease;
-    el.textContent = value.toFixed(end.includes('.') ? 1 : 0) + suffix;
+    el.textContent = value.toFixed(end.toString().includes('.') ? 1 : 0) + suffix;
     if (progress < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
